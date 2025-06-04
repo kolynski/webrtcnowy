@@ -70,14 +70,15 @@
         <div id="chat-messages"></div>
         <input id="chat-input" type="text" placeholder="Type a message..." />
         <button id="chat-send">Send</button>
-    </div>    <script>        // --- Konfiguracja WebRTC po stronie klienta ---
+    </div>    <script>        
+        // --- Konfiguracja WebRTC po stronie klienta ---
         const rtcConfig = {
             iceServers: [
                 { urls: 'stun:stun.l.google.com:19302' }
             ]
         };
 
-        // --- Zmienne po stronie klienta ---
+        // --- Zmienne globalne po stronie klienta ---
         const statusDiv = document.getElementById('status');
         const startButton = document.getElementById('startButton');
         const viewButton = document.getElementById('viewButton');
@@ -87,16 +88,24 @@
         const chatMessagesDiv = document.getElementById('chat-messages');
         const chatInput = document.getElementById('chat-input');
         const chatSend = document.getElementById('chat-send');
-        const nickInput = document.getElementById('nickInput');        let ws;
+        const nickInput = document.getElementById('nickInput');        
+
+        // Zmienne stanu połączenia
+        let ws;
         let myConnectionId = null;
         let myRole = null;
         let localStream = null;
         let myNick = '';
 
-        const peerConnections = {};
-        let streamerPeerConnection = null;        // --- WebSocket Signaling Logic ---
+        // Mapy połączeń WebRTC
+        const peerConnections = {}; // Dla streamera - mapa wszystkich widzów
+        let streamerPeerConnection = null; // Dla widza - połączenie ze streamerem
+
+        // --- WebSocket Signaling Logic - Obsługa komunikacji z serwerem ---
         function setupWebSocket() {
-            ws = new WebSocket(`ws://${window.location.hostname}:${window.location.port}`);            ws.onopen = () => {
+            ws = new WebSocket(`ws://${window.location.hostname}:${window.location.port}`);            
+
+            ws.onopen = () => {
                 console.log('WebSocket connected');
                 statusDiv.textContent = 'Status: Connected. Waiting for role selection.';
                 validateNick();
@@ -105,7 +114,10 @@
             ws.onmessage = async (message) => {
                 try {
                     const data = JSON.parse(message.data);
-                    console.log('WebSocket message received:', data);                    switch (data.type) {
+                    console.log('WebSocket message received:', data);                    
+
+                    switch (data.type) {
+                        // Otrzymanie ID połączenia od serwera
                         case 'id':
                             myConnectionId = data.id;
                             console.log('My Connection ID:', myConnectionId);
@@ -114,6 +126,7 @@
                             ws.send(JSON.stringify({ type: 'checkStreamer' }));
                             break;
 
+                        // Streamer jest dostępny
                         case 'streamerAvailable':
                             console.log('Streamer is available');
                             if (myRole !== 'streamer') {
@@ -121,6 +134,7 @@
                             }
                             break;
 
+                        // Streamer jest niedostępny
                          case 'streamerUnavailable':
                              console.log('Streamer is unavailable');
                              viewButton.disabled = true;
@@ -134,6 +148,7 @@
                              }
                              break;
 
+                        // Nowy widz dołączył (dla streamera)
                         case 'newViewer':
                             if (myRole === 'streamer') {
                                 const viewerId = data.viewerId;
@@ -141,7 +156,10 @@
                                 statusDiv.textContent = `Status: Streamer. New viewer: ${viewerId}`;
                                 createPeerConnection(viewerId, 'offer');
                             }
-                            break;                        case 'offer':
+                            break;                        
+
+                        // Otrzymanie oferty WebRTC (dla widza)
+                        case 'offer':
                             if (myRole === 'viewer' && data.to === myConnectionId) {
                                 const streamerId = data.from;
                                 console.log(`Received offer from streamer: ${streamerId}`);
@@ -159,6 +177,7 @@
                             }
                             break;
 
+                        // Otrzymanie odpowiedzi WebRTC (dla streamera)
                         case 'answer':
                             if (myRole === 'streamer' && data.to === myConnectionId) {
                                 const viewerId = data.from;
@@ -171,7 +190,10 @@
                                     console.warn(`Received answer for unknown viewer ID: ${viewerId}`);
                                 }
                             }
-                            break;                        case 'icecandidate':
+                            break;                        
+
+                        // Otrzymanie kandydata ICE
+                        case 'icecandidate':
                             if (data.to === myConnectionId) {
                                 const peerId = data.from;
                                 const candidate = new RTCIceCandidate(data.candidate);
@@ -192,19 +214,23 @@
                             }
                             break;
 
+                        // Aktualizacja liczby widzów
                         case 'viewerCount':
                             viewerCountDiv.textContent = 'Viewers: ' + data.count;
                             break;
 
+                        // Wiadomość czatu
                         case 'chat':
                             let sender = data.nick ? data.nick : (data.from === myConnectionId ? 'Me' : data.from);
                             appendChatMessage(`${sender}: ${data.text}`, data.from === myConnectionId);
                             break;
 
+                        // Użytkownik dołączył
                         case 'userJoined':
                             appendChatMessage('User joined: ' + data.id);
                             break;
 
+                        // Użytkownik opuścił
                         case 'userLeft':
                             appendChatMessage('User left: ' + data.id);
                             break;
@@ -237,17 +263,23 @@
                  viewerCountDiv.textContent = '';
                  appendChatMessage('WebSocket connection closed.');
             };
-        }        // --- Logika WebRTC po stronie klienta ---
+        }        
+
+        // --- Logika WebRTC po stronie klienta - Tworzenie połączeń peer-to-peer ---
         function createPeerConnection(peerId, type) {
             console.log(`Creating PeerConnection for ${peerId} (${type})`);
             const pc = new RTCPeerConnection(rtcConfig);
 
+            // Dodanie lokalnego strumienia do połączenia (tylko dla streamera)
             if (myRole === 'streamer' && localStream) {
                  localStream.getTracks().forEach(track => {
                      pc.addTrack(track, localStream);
                  });
                  console.log('Added local tracks to PC');
-            }            pc.onicecandidate = (event) => {
+            }            
+
+            // Obsługa kandydatów ICE
+            pc.onicecandidate = (event) => {
                 if (event.candidate) {
                     console.log(`Sending ICE candidate to ${peerId}`);
                     ws.send(JSON.stringify({
@@ -259,6 +291,7 @@
                 }
             };
 
+            // Obsługa otrzymanego strumienia (tylko dla widza)
             if (myRole === 'viewer') {
                  pc.ontrack = (event) => {
                      console.log('Received remote track');
@@ -269,6 +302,7 @@
                  };
             }
 
+            // Automatyczne tworzenie oferty przy potrzebie renegocjacji
             pc.onnegotiationneeded = async () => {
                 if (myRole === 'streamer' && type === 'offer') {
                      console.log(`Negotiation needed for ${peerId}, creating offer...`);
@@ -288,24 +322,27 @@
                  }
             };
 
+            // Zapisanie połączenia w odpowiedniej mapie
             if (myRole === 'streamer') {
                 peerConnections[peerId] = pc;
                 return pc;
             } else if (myRole === 'viewer') {
                  return pc;
             }
-             return null;        }
-
+             return null;        
+        }
 
         // --- Obsługa przycisków i logika wyboru roli ---
         function validateNick() {
-            const nick = nickInput.value.trim();            const nickValid = nick.length >= 2 && myConnectionId;
+            const nick = nickInput.value.trim();            
+            const nickValid = nick.length >= 2 && myConnectionId;
             startButton.disabled = !nickValid;
             viewButton.disabled = !nickValid;
             chatSend.disabled = !nickValid || !ws || ws.readyState !== WebSocket.OPEN;
         }
         nickInput.addEventListener('input', validateNick);
 
+        // Obsługa przycisku Start Streaming
         startButton.onclick = async () => {
             myNick = nickInput.value.trim();
             if (myNick.length < 2) {
@@ -321,17 +358,22 @@
                  console.warn('Already have a role:', myRole);
                  statusDiv.textContent = `Status: Already ${myRole}.`;
                  return;
-            }            myRole = 'streamer';
+            }            
+
+            myRole = 'streamer';
              statusDiv.textContent = 'Status: Getting user media...';
              startButton.disabled = true;
 
             try {
+                // Pobranie strumienia z kamery i mikrofonu
                 localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
                 localVideo.srcObject = localStream;
 
+                // Informowanie serwera o roli streamera
                 ws.send(JSON.stringify({ type: 'setType', role: 'streamer', from: myConnectionId, nick: myNick }));
 
-                statusDiv.textContent = 'Status: Streamer. Waiting for viewers.';            } catch (e) {
+                statusDiv.textContent = 'Status: Streamer. Waiting for viewers.';            
+            } catch (e) {
                 console.error('Error accessing media devices:', e);
                  statusDiv.textContent = `Status: Error - Failed to get media: ${e.message}`;
                  myRole = null;
@@ -339,6 +381,7 @@
             }
         };
 
+        // Obsługa przycisku Start Viewing
         viewButton.onclick = () => {
             myNick = nickInput.value.trim();
             if (myNick.length < 2) {
@@ -354,12 +397,14 @@
                  console.warn('Already have a role:', myRole);
                  statusDiv.textContent = `Status: Already ${myRole}.`;
                  return;
-            }            myRole = 'viewer';
+            }            
+
+            myRole = 'viewer';
              statusDiv.textContent = 'Status: Trying to view...';
              viewButton.disabled = true;
 
+             // Informowanie serwera o roli widza
              ws.send(JSON.stringify({ type: 'setType', role: 'viewer', from: myConnectionId, nick: myNick }));
-
         };
 
         // --- Logika czatu po stronie klienta ---
@@ -373,6 +418,7 @@
 
         chatInput.oninput = validateNick;
 
+        // Obsługa wysyłania wiadomości czatu
         chatSend.onclick = () => {
             myNick = nickInput.value.trim();
             if (myNick.length < 2) {
@@ -385,7 +431,9 @@
                 chatInput.value = '';
                 validateNick();
             }
-        };        // --- Inicjalizacja po załadowaniu strony ---
+        };        
+
+        // --- Inicjalizacja po załadowaniu strony ---
         setupWebSocket();
 
     </script>
